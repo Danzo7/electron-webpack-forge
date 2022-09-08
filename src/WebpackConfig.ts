@@ -222,18 +222,15 @@ export default class WebpackConfigGenerator {
     const rendererConfig = await this.resolveConfig(
       entryPoint.config || this.pluginConfig.renderer.config,
     );
-    //filter renderer config from html plugin
-    const htmlPlugin = rendererConfig.plugins?.find(
-      (plugin) => plugin instanceof HtmlWebpackPlugin,
-    );
-    console.log(htmlPlugin);
-    console.log(rendererConfig?.plugins?.[0]?.constructor?.name);
-    if (htmlPlugin) {
-      rendererConfig.plugins = rendererConfig.plugins?.filter(
-        (plugin) => plugin !== htmlPlugin,
-      );
-    }
+  //filter webpack html plugin and css plugin from renderer config
+    if (rendererConfig.plugins) {
+      rendererConfig.plugins = rendererConfig.plugins.filter(
+        (plugin)=>!(plugin.constructor.name=="HtmlWebpackPlugin"||plugin.constructor.name=="MiniCssExtractPlugin")
+         );   
+      }
+      console.log(rendererConfig.plugins)
     const prefixedEntries = entryPoint.prefixedEntries || [];
+    
 
     return webpackMerge(
       {
@@ -264,8 +261,12 @@ export default class WebpackConfigGenerator {
     const rendererConfig = await this.resolveConfig(
       this.pluginConfig.renderer.config,
     );
+    //check if renderer config has html plugin
+      const hasHtmlPlugin=rendererConfig?.plugins?.some(
+        (plugin)=>plugin.constructor.name=="HtmlWebpackPlugin"
+          )??false;
+      
     const defines = this.getDefines(false);
-
     return entryPoints.map((entryPoint) => {
       const config = webpackMerge(
         {
@@ -292,12 +293,12 @@ export default class WebpackConfigGenerator {
             __filename: false,
           },
           plugins: [
-            ...(entryPoint.html
+            ...(entryPoint.html&&!hasHtmlPlugin
               ? [
                   new HtmlWebpackPlugin({
                     title: entryPoint.name,
                     template: entryPoint.html,
-                    filename: `${entryPoint.name}/index.html`,
+                    filename: `${entryPoint.isMain?"":(entryPoint.name+"/")}index.html`,
                     chunks: [entryPoint.name].concat(
                       entryPoint.additionalChunks || [],
                     ),
