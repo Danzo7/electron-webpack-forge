@@ -1,5 +1,5 @@
 {
-  "name": "electron-wp",
+  "name": "electron-webpack-forge",
   "version": "0.1.0",
   "description": "Webpack plugin for Electron Forge, lets you use Webpack directly in your tooling",
   "license": "MIT",
