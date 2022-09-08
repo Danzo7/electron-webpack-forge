@@ -428,8 +428,7 @@ the generated files). Instead, it is ${JSON.stringify(pj.main)}`);
         if (entryPoint.preload) {
           const config = await this.configGenerator.getPreloadRendererConfig(
             entryPoint,
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            entryPoint.preload!,
+            entryPoint.preload,
           );
           await new Promise((resolve, reject) => {
             const tab = logger.createTab(`${entryPoint.name} - Preload`);
