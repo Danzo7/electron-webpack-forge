@@ -278,7 +278,7 @@ Your packaged app may be larger than expected if you dont ignore everything othe
         return true;
       }
 
-      return !/^[/\\]\.webpack($|[/\\]).*$/.test(file);
+      return !new RegExp('^[/\\\\]' + this.output + '($|[/\\\\]).*$').test(file)
     };
     return forgeConfig;
   };
@@ -289,9 +289,9 @@ Your packaged app may be larger than expected if you dont ignore everything othe
   ): Promise<void> => {
     const pj = await fs.readJson(path.resolve(this.projectDir, 'package.json'));
 
-    if (!pj.main?.endsWith('.webpack/main')) {
+    if (!pj.main?.endsWith(this.output+'/main')) {
       throw new Error(`Electron Forge is configured to use the Webpack plugin. The plugin expects the
-"main" entry point in "package.json" to be ".webpack/main" (where the plugin outputs
+"main" entry point in "package.json" to be "${this.output}/main" (where the plugin outputs
 the generated files). Instead, it is ${JSON.stringify(pj.main)}`);
     }
 
