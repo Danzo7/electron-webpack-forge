@@ -54,6 +54,7 @@ export default class WebpackPlugin extends PluginBase<WebpackPluginConfig> {
   private port = DEFAULT_PORT;
 
   private loggerPort = DEFAULT_LOGGER_PORT;
+  private output: string
 
   constructor(c: WebpackPluginConfig) {
     super(c);
@@ -71,6 +72,8 @@ export default class WebpackPlugin extends PluginBase<WebpackPluginConfig> {
 
     this.startLogic = this.startLogic.bind(this);
     this.getHook = this.getHook.bind(this);
+    this.output = c.output ?? '.webpack'
+
   }
 
   private isValidPort = (port: number) => {
@@ -169,7 +172,7 @@ export default class WebpackPlugin extends PluginBase<WebpackPluginConfig> {
 
   setDirectories = (dir: string): void => {
     this.projectDir = dir;
-    this.baseDir = path.resolve(dir, '.webpack');
+    this.baseDir = path.resolve(dir, this.output);
   };
 
   get configGenerator(): WebpackConfigGenerator {
@@ -249,7 +252,7 @@ export default class WebpackPlugin extends PluginBase<WebpackPluginConfig> {
         console.error(
           chalk.red(`You have set packagerConfig.ignore, the Electron Forge webpack plugin normally sets this automatically.
 
-Your packaged app may be larger than expected if you dont ignore everything other than the '.webpack' folder`),
+Your packaged app may be larger than expected if you dont ignore everything other than the '${this.output}' folder`),
         );
       }
       return forgeConfig;
@@ -259,14 +262,14 @@ Your packaged app may be larger than expected if you dont ignore everything othe
 
       if (
         this.config.jsonStats &&
-        file.endsWith(path.join('.webpack', 'main', 'stats.json'))
+        file.endsWith(path.join(this.output, 'main', 'stats.json'))
       ) {
         return true;
       }
 
       if (
         this.config.renderer.jsonStats &&
-        file.endsWith(path.join('.webpack', 'renderer', 'stats.json'))
+        file.endsWith(path.join(this.output, 'renderer', 'stats.json'))
       ) {
         return true;
       }
