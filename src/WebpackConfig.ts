@@ -228,7 +228,6 @@ export default class WebpackConfigGenerator {
         (plugin)=>!(plugin.constructor.name=="HtmlWebpackPlugin"||plugin.constructor.name=="MiniCssExtractPlugin")
          );   
       }
-      console.log(rendererConfig.plugins)
     const prefixedEntries = entryPoint.prefixedEntries || [];
     
 
