@@ -128,7 +128,6 @@ class WebpackConfigGenerator {
         if (rendererConfig.plugins) {
             rendererConfig.plugins = rendererConfig.plugins.filter((plugin) => !(plugin.constructor.name == "HtmlWebpackPlugin" || plugin.constructor.name == "MiniCssExtractPlugin"));
         }
-        console.log(rendererConfig.plugins);
         const prefixedEntries = entryPoint.prefixedEntries || [];
         return (0, webpack_merge_1.merge)({
             devtool: this.rendererSourceMapOption,
