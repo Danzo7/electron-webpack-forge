@@ -34,7 +34,7 @@
     "@electron-forge/plugin-base": "6.0.4",
     "@electron-forge/shared-types": "6.0.4",
     "@electron-forge/web-multi-logger": "6.0.4",
-    "chalk": "^5.2.0",
+    "chalk": "4.1.2",
     "debug": "^4.3.4",
     "fs-extra": "^11.1.0",
     "html-webpack-plugin": "^5.5.0",
