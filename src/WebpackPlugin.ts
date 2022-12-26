@@ -1,28 +1,27 @@
-/* eslint "no-console": "off" */
-import { asyncOra } from '@electron-forge/async-ora';
-import PluginBase from '@electron-forge/plugin-base';
+import http from 'http';
+import path from 'path';
 import {
-  ElectronProcess,
-  ForgeArch,
-  ForgeConfig,
-  ForgeHookFn,
-  ForgePlatform,
+  getElectronVersion,
+  listrCompatibleRebuildHook,
+} from '@electron-forge/core-utils';
+import { namedHookWithTaskFn, PluginBase } from '@electron-forge/plugin-base';
+import {
+  ForgeMultiHookMap,
+  ResolvedForgeConfig,
+  StartResult,
 } from '@electron-forge/shared-types';
 import Logger, { Tab } from '@electron-forge/web-multi-logger';
-
 import chalk from 'chalk';
 import debug from 'debug';
-import fs from 'fs-extra';
-import http from 'http';
-import { merge } from 'webpack-merge';
-import path from 'path';
-import { utils } from '@electron-forge/core';
+import fs, { readJsonSync } from 'fs-extra';
 import webpack, { Configuration, Watching } from 'webpack';
 import WebpackDevServer from 'webpack-dev-server';
+import { merge } from 'webpack-merge';
 
 import { WebpackPluginConfig } from './Config';
 import ElectronForgeLoggingPlugin from './util/ElectronForgeLogging';
 import once from './util/once';
+import { isLocalWindow, isPreloadOnly } from './util/rendererTypeUtils';
 import WebpackConfigGenerator from './WebpackConfig';
 
 const d = debug('electron-forge:plugin:webpack');
@@ -54,7 +53,8 @@ export default class WebpackPlugin extends PluginBase<WebpackPluginConfig> {
   private port = DEFAULT_PORT;
 
   private loggerPort = DEFAULT_LOGGER_PORT;
-  private output: string
+
+  private output: string;
 
   constructor(c: WebpackPluginConfig) {
     super(c);
@@ -69,11 +69,9 @@ export default class WebpackPlugin extends PluginBase<WebpackPluginConfig> {
         this.loggerPort = c.loggerPort;
       }
     }
-
+    this.output = '.webpack';
     this.startLogic = this.startLogic.bind(this);
-    this.getHook = this.getHook.bind(this);
-    this.output = c.output ?? '.webpack'
-
+    this.getHooks = this.getHooks.bind(this);
   }
 
   private isValidPort = (port: number) => {
@@ -135,7 +133,6 @@ export default class WebpackPlugin extends PluginBase<WebpackPluginConfig> {
     await fs.writeJson(jsonStatsFilename, jsonStats, { spaces: 2 });
   }
 
-  // eslint-disable-next-line max-len
   private runWebpack = async (
     options: Configuration[],
     isRenderer = false,
@@ -172,78 +169,74 @@ export default class WebpackPlugin extends PluginBase<WebpackPluginConfig> {
 
   setDirectories = (dir: string): void => {
     this.projectDir = dir;
+    const pj = readJsonSync(path.resolve(this.projectDir, 'package.json'));
+    if (!pj.name) throw new Error('The error');
+    this.output = pj.main.split('/')[0];
     this.baseDir = path.resolve(dir, this.output);
   };
 
   get configGenerator(): WebpackConfigGenerator {
-    // eslint-disable-next-line no-underscore-dangle
     if (!this._configGenerator) {
-      // eslint-disable-next-line no-underscore-dangle
       this._configGenerator = new WebpackConfigGenerator(
         this.config,
         this.projectDir,
+        this.baseDir,
         this.isProd,
         this.port,
       );
     }
 
-    // eslint-disable-next-line no-underscore-dangle
     return this._configGenerator;
   }
 
-  private loggedOutputUrl = false;
+  getHooks(): ForgeMultiHookMap {
+    return {
+      prePackage: [
+        namedHookWithTaskFn<'prePackage'>(
+          async (task, config, platform, arch) => {
+            if (!task) {
+              throw new Error(
+                'Incompatible usage of webpack-plugin prePackage hook',
+              );
+            }
 
-  getHook(name: string): ForgeHookFn | null {
-    switch (name) {
-      case 'prePackage':
-        this.isProd = true;
-        return async (
-          config: ForgeConfig,
-          platform: ForgePlatform,
-          arch: ForgeArch,
-        ) => {
-          await fs.remove(this.baseDir);
-          await utils.rebuildHook(
-            this.projectDir,
-            await utils.getElectronVersion(
+            this.isProd = true;
+            await fs.remove(this.baseDir);
+            await listrCompatibleRebuildHook(
               this.projectDir,
-              await fs.readJson(path.join(this.projectDir, 'package.json')),
-            ),
-            platform,
-            arch,
-            config.electronRebuildConfig,
-          );
+              await getElectronVersion(
+                this.projectDir,
+                await fs.readJson(path.join(this.projectDir, 'package.json')),
+              ),
+              platform,
+              arch,
+              config.rebuildConfig,
+              task,
+              chalk.cyan('[plugin-webpack] '),
+            );
+          },
+          'Preparing native dependencies',
+        ),
+        namedHookWithTaskFn<'prePackage'>(async () => {
           await this.compileMain();
           await this.compileRenderers();
-        };
-      case 'postStart':
-        return async (_config: ForgeConfig, child: ElectronProcess) => {
-          if (!this.loggedOutputUrl) {
-            console.info(
-              `\n\nWebpack Output Available: ${chalk.cyan(
-                `http://localhost:${this.loggerPort}`,
-              )}\n`,
-            );
-            this.loggedOutputUrl = true;
-          }
-          d('hooking electron process exit');
-          child.on('exit', () => {
-            if (child.restarted) return;
-            this.exitHandler({ cleanup: true, exit: true });
-          });
-        };
-      case 'resolveForgeConfig':
-        return this.resolveForgeConfig;
-      case 'packageAfterCopy':
-        return this.packageAfterCopy;
-      default:
-        return null;
-    }
+        }, 'Building webpack bundles'),
+      ],
+      postStart: async (_config, child) => {
+        d('hooking electron process exit');
+        child.on('exit', () => {
+          if (child.restarted) return;
+          this.exitHandler({ cleanup: true, exit: true });
+        });
+      },
+      resolveForgeConfig: this.resolveForgeConfig,
+      packageAfterCopy: this.packageAfterCopy,
+    };
   }
 
   resolveForgeConfig = async (
-    forgeConfig: ForgeConfig,
-  ): Promise<ForgeConfig> => {
+    forgeConfig: ResolvedForgeConfig,
+  ): Promise<ResolvedForgeConfig> => {
     if (!forgeConfig.packagerConfig) {
       forgeConfig.packagerConfig = {};
     }
@@ -252,7 +245,7 @@ export default class WebpackPlugin extends PluginBase<WebpackPluginConfig> {
         console.error(
           chalk.red(`You have set packagerConfig.ignore, the Electron Forge webpack plugin normally sets this automatically.
 
-Your packaged app may be larger than expected if you dont ignore everything other than the '${this.output}' folder`),
+          Your packaged app may be larger than expected if you dont ignore everything other than the '${this.output}' folder`),
         );
       }
       return forgeConfig;
@@ -278,30 +271,30 @@ Your packaged app may be larger than expected if you dont ignore everything othe
         return true;
       }
 
-      return !new RegExp('^[/\\\\]' + this.output + '($|[/\\\\]).*$').test(file)
+      return !new RegExp('^[/\\\\]' + this.output + '($|[/\\\\]).*$').test(
+        file,
+      );
     };
     return forgeConfig;
   };
 
   packageAfterCopy = async (
-    _forgeConfig: ForgeConfig,
+    _forgeConfig: ResolvedForgeConfig,
     buildPath: string,
   ): Promise<void> => {
     const pj = await fs.readJson(path.resolve(this.projectDir, 'package.json'));
 
-    if (!pj.main?.endsWith(this.output+'/main')) {
+    if (!pj.main?.endsWith(this.output + '/main')) {
       throw new Error(`Electron Forge is configured to use the Webpack plugin. The plugin expects the
-"main" entry point in "package.json" to be "${this.output}/main" (where the plugin outputs
+"main" entry point in "package.json" to be "${
+        this.output
+      }/main" (where the plugin outputs
 the generated files). Instead, it is ${JSON.stringify(pj.main)}`);
     }
 
     if (pj.config) {
       delete pj.config.forge;
     }
-    pj.devDependencies = {};
-    pj.dependencies = {};
-    pj.optionalDependencies = {};
-    pj.peerDependencies = {};
 
     await fs.writeJson(path.resolve(buildPath, 'package.json'), pj, {
       spaces: 2,
@@ -315,158 +308,163 @@ the generated files). Instead, it is ${JSON.stringify(pj.main)}`);
     if (logger) {
       tab = logger.createTab('Main Process');
     }
-    await asyncOra('Compiling Main Process Code', async () => {
-      const mainConfig = await this.configGenerator.getMainConfig();
-      await new Promise((resolve, reject) => {
-        const compiler = webpack(mainConfig);
-        const [onceResolve, onceReject] = once(resolve, reject);
-        const cb: WebpackWatchHandler = async (err, stats) => {
-          if (tab && stats) {
-            tab.log(
-              stats.toString({
-                colors: true,
-              }),
-            );
-          }
-          if (this.config.jsonStats) {
-            await this.writeJSONStats(
-              'main',
-              stats,
-              mainConfig.stats as WebpackToJsonOptions,
-              'main',
-            );
-          }
 
-          if (err) return onceReject(err);
-          if (!watch && stats?.hasErrors()) {
-            return onceReject(
-              new Error(
-                `Compilation errors in the main process: ${stats.toString()}`,
-              ),
-            );
-          }
-
-          return onceResolve(undefined);
-        };
-        if (watch) {
-          this.watchers.push(compiler.watch({}, cb));
-        } else {
-          compiler.run(cb);
+    const mainConfig = await this.configGenerator.getMainConfig();
+    await new Promise((resolve, reject) => {
+      const compiler = webpack(mainConfig);
+      const [onceResolve, onceReject] = once(resolve, reject);
+      const cb: WebpackWatchHandler = async (err, stats) => {
+        if (tab && stats) {
+          tab.log(
+            stats.toString({
+              colors: true,
+            }),
+          );
         }
-      });
+        if (this.config.jsonStats) {
+          await this.writeJSONStats(
+            'main',
+            stats,
+            mainConfig.stats as WebpackToJsonOptions,
+            'main',
+          );
+        }
+
+        if (err) return onceReject(err);
+        if (!watch && stats?.hasErrors()) {
+          return onceReject(
+            new Error(
+              `Compilation errors in the main process: ${stats.toString()}`,
+            ),
+          );
+        }
+
+        return onceResolve(undefined);
+      };
+      if (watch) {
+        this.watchers.push(compiler.watch({}, cb));
+      } else {
+        compiler.run(cb);
+      }
     });
   };
 
   compileRenderers = async (watch = false): Promise<void> => {
-    await asyncOra('Compiling Renderer Template', async () => {
-      const stats = await this.runWebpack(
-        await this.configGenerator.getRendererConfig(
-          this.config.renderer.entryPoints,
-        ),
-        true,
+    const stats = await this.runWebpack(
+      await this.configGenerator.getRendererConfig(
+        this.config.renderer.entryPoints,
+      ),
+      true,
+    );
+    if (!watch && stats?.hasErrors()) {
+      throw new Error(
+        `Compilation errors in the renderer: ${stats.toString()}`,
       );
-      if (!watch && stats?.hasErrors()) {
-        throw new Error(
-          `Compilation errors in the renderer: ${stats.toString()}`,
-        );
-      }
-    });
+    }
 
     for (const entryPoint of this.config.renderer.entryPoints) {
-      if (entryPoint.preload) {
-        await asyncOra(
-          `Compiling Renderer Preload: ${entryPoint.name}`,
-          async () => {
-            const stats = await this.runWebpack(
-              // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-              [
-                await this.configGenerator.getPreloadRendererConfig(
-                  entryPoint,
-                  entryPoint.preload!,
-                ),
-              ],
-            );
-
-            if (stats?.hasErrors()) {
-              throw new Error(
-                `Compilation errors in the preload (${
-                  entryPoint.name
-                }): ${stats.toString()}`,
-              );
-            }
-          },
+      if (
+        (isLocalWindow(entryPoint) && !!entryPoint.preload) ||
+        isPreloadOnly(entryPoint)
+      ) {
+        const stats = await this.runWebpack(
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+          [
+            await this.configGenerator.getPreloadConfigForEntryPoint(
+              entryPoint,
+            ),
+          ],
         );
+
+        if (stats?.hasErrors()) {
+          throw new Error(
+            `Compilation errors in the preload (${
+              entryPoint.name
+            }): ${stats.toString()}`,
+          );
+        }
       }
     }
   };
 
-  launchDevServers = async (logger: Logger): Promise<void> => {
-    await asyncOra('Launch Dev Servers', async () => {
-      const tab = logger.createTab('Renderers');
-      const pluginLogs = new ElectronForgeLoggingPlugin(tab);
+  launchRendererDevServers = async (logger: Logger): Promise<void> => {
+    const tab = logger.createTab('Renderers');
+    const pluginLogs = new ElectronForgeLoggingPlugin(tab);
 
-      const config = await this.configGenerator.getRendererConfig(
-        this.config.renderer.entryPoints,
-      );
-      for (const entryConfig of config) {
-        if (!entryConfig.plugins) entryConfig.plugins = [];
-        entryConfig.plugins.push(pluginLogs);
-      }
+    const config = await this.configGenerator.getRendererConfig(
+      this.config.renderer.entryPoints,
+    );
 
-      const compiler = webpack(config);
-      const webpackDevServer = new WebpackDevServer(
-        this.devServerOptions(),
-        compiler,
-      );
-      await webpackDevServer.start();
-      if (webpackDevServer.server) this.servers.push(webpackDevServer.server);
-      else throw new Error('Failed to start webpack dev server');
-    });
+    if (config.length === 0) {
+      return;
+    }
 
-    await asyncOra('Compiling Preload Scripts', async () => {
-      for (const entryPoint of this.config.renderer.entryPoints) {
-        if (entryPoint.preload) {
-          const config = await this.configGenerator.getPreloadRendererConfig(
-            entryPoint,
-            entryPoint.preload,
+    for (const entryConfig of config) {
+      if (!entryConfig.plugins) entryConfig.plugins = [];
+      entryConfig.plugins.push(pluginLogs);
+
+      entryConfig.infrastructureLogging = {
+        level: 'none',
+      };
+      entryConfig.stats = 'none';
+    }
+
+    const compiler = webpack(config);
+    const webpackDevServer = new WebpackDevServer(
+      this.devServerOptions(),
+      compiler,
+    );
+    await webpackDevServer.start();
+    this.servers.push(webpackDevServer.server!);
+
+    for (const entryPoint of this.config.renderer.entryPoints) {
+      if (
+        (isLocalWindow(entryPoint) && !!entryPoint.preload) ||
+        isPreloadOnly(entryPoint)
+      ) {
+        const config = await this.configGenerator.getPreloadConfigForEntryPoint(
+          entryPoint,
+        );
+        config.infrastructureLogging = {
+          level: 'none',
+        };
+        config.stats = 'none';
+        await new Promise((resolve, reject) => {
+          const tab = logger.createTab(`${entryPoint.name} - Preload`);
+          const [onceResolve, onceReject] = once(resolve, reject);
+
+          this.watchers.push(
+            webpack(config).watch({}, (err, stats) => {
+              if (stats) {
+                tab.log(
+                  stats.toString({
+                    colors: true,
+                  }),
+                );
+              }
+
+              if (err) return onceReject(err);
+              return onceResolve(undefined);
+            }),
           );
-          await new Promise((resolve, reject) => {
-            const tab = logger.createTab(`${entryPoint.name} - Preload`);
-            const [onceResolve, onceReject] = once(resolve, reject);
-
-            this.watchers.push(
-              webpack(config).watch({}, (err, stats) => {
-                if (stats) {
-                  tab.log(
-                    stats.toString({
-                      colors: true,
-                    }),
-                  );
-                }
-
-                if (err) return onceReject(err);
-                return onceResolve(undefined);
-              }),
-            );
-          });
-        }
+        });
       }
-    });
+    }
   };
 
-  devServerOptions(): Record<string, unknown> {
+  devServerOptions(): WebpackDevServer.Configuration {
     const cspDirectives =
       this.config.devContentSecurityPolicy ??
       "default-src 'self' 'unsafe-inline' data:; script-src 'self' 'unsafe-eval' 'unsafe-inline' data:";
 
-    const defaults = {
+    const defaults: Partial<WebpackDevServer.Configuration> = {
       hot: true,
       devMiddleware: {
         writeToDisk: true,
       },
       historyApiFallback: true,
     };
-    const overrides = {
+    const overrides: Partial<WebpackDevServer.Configuration> = {
       port: this.port,
       setupExitSignals: true,
       static: path.resolve(this.baseDir, 'renderer'),
@@ -480,7 +478,7 @@ the generated files). Instead, it is ${JSON.stringify(pj.main)}`);
 
   private alreadyStarted = false;
 
-  async startLogic(): Promise<false> {
+  async startLogic(): Promise<StartResult> {
     if (this.alreadyStarted) return false;
     this.alreadyStarted = true;
 
@@ -488,11 +486,36 @@ the generated files). Instead, it is ${JSON.stringify(pj.main)}`);
 
     const logger = new Logger(this.loggerPort);
     this.loggers.push(logger);
-    await this.compileMain(true, logger);
-    await this.launchDevServers(logger);
     await logger.start();
-    return false;
+
+    return {
+      tasks: [
+        {
+          title: 'Compiling main process code',
+          task: async () => {
+            await this.compileMain(true, logger);
+          },
+          options: {
+            showTimer: true,
+          },
+        },
+        {
+          title: 'Launching dev servers for renderer process code',
+          task: async (_, task) => {
+            await this.launchRendererDevServers(logger);
+            task.output = `Output Available: ${chalk.cyan(
+              `http://localhost:${this.loggerPort}`,
+            )}\n`;
+          },
+          options: {
+            persistentOutput: true,
+            showTimer: true,
+          },
+        },
+      ],
+      result: false,
+    };
   }
 }
 
-export { WebpackPluginConfig };
+export { WebpackPlugin, WebpackPluginConfig };

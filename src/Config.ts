@@ -1,23 +1,13 @@
 import { Configuration as RawWebpackConfiguration } from 'webpack';
+import WebpackDevServer from 'webpack-dev-server';
+
 import { ConfigurationFactory as WebpackConfigurationFactory } from './WebpackConfig';
 
-export interface WebpackPluginEntryPoint {
-  /**
-   * Relative or absolute path to the HTML template file for this entry point
-   *
-   * If this is a window, you MUST provide this.  Only leave it unset for things
-   * like WebWorker scripts.
-   */
-  html?: string;
-
-  isMain?: boolean;
-  /**
-   * Relative or absolute path to the main JS file for this entry point
-   */
-  js: string;
+export interface WebpackPluginEntryPointBase {
   /**
    * Human friendly name of your entry point
    */
+  isMain?: boolean;
   name: string;
   /**
    * Additional entries to put in the array of entries for this entry point,
@@ -26,24 +16,19 @@ export interface WebpackPluginEntryPoint {
    */
   prefixedEntries?: string[];
   /**
-   * Additional chunks to include in the outputted HTML file, use this if you
-   * set up some custom chunking.  E.g. CommonChunksPlugin
+   * Additional chunks to include in the outputted HTML file. Use this if you
+   * set up some custom chunking (e.g. using SplitChunksPlugin).
    */
   additionalChunks?: string[];
   /**
-   * Information about the preload script for this entry point, if you don't use
-   * preload scripts you don't need to set this.
-   */
-  preload?: WebpackPreloadEntryPoint;
-  /**
-   * Override the Webpack config for this renderer based on whether `nodeIntegration` for
-   * the `BrowserWindow` is enabled. Namely, for Webpack's `target` option:
+   * Override the webpack config for this renderer based on whether `nodeIntegration` for
+   * the `BrowserWindow` is enabled. For webpack's `target` option:
    *
    * * When `nodeIntegration` is true, the `target` is `electron-renderer`.
    * * When `nodeIntegration` is false, the `target` is `web`.
    *
-   * Unfortunately, we cannot derive the value from the main process code as it can be a
-   * dynamically generated value at runtime, and Webpack processes at build-time.
+   * Unfortunately, we cannot derive the value from the main process code as it can be
+   * dynamically generated at run-time, and webpack processes at build-time.
    *
    * Defaults to `false` (as it is disabled by default in Electron \>= 5) or the value set
    * for all entries.
@@ -51,9 +36,47 @@ export interface WebpackPluginEntryPoint {
   nodeIntegration?: boolean;
 }
 
+export interface WebpackPluginEntryPointLocalWindow
+  extends WebpackPluginEntryPointBase {
+  /**
+   * Relative or absolute path to the HTML template file for this entry point.
+   */
+  html: string;
+  /**
+   * Relative or absolute path to the main JS file for this entry point.
+   */
+  js: string;
+  /**
+   * Information about the preload script for this entry point. If you don't use
+   * preload scripts, you don't need to set this.
+   */
+  preload?: WebpackPreloadEntryPoint;
+}
+
+export interface WebpackPluginEntryPointPreloadOnly
+  extends WebpackPluginEntryPointBase {
+  /**
+   * Information about the preload script for this entry point.
+   */
+  preload: WebpackPreloadEntryPoint;
+}
+
+export interface WebpackPluginEntryPointNoWindow
+  extends WebpackPluginEntryPointBase {
+  /**
+   * Relative or absolute path to the main JS file for this entry point.
+   */
+  js: string;
+}
+
+export type WebpackPluginEntryPoint =
+  | WebpackPluginEntryPointLocalWindow
+  | WebpackPluginEntryPointNoWindow
+  | WebpackPluginEntryPointPreloadOnly;
+
 export interface WebpackPreloadEntryPoint {
   /**
-   * Relative or absolute path to the preload JS file
+   * Relative or absolute path to the preload JS file.
    */
   js: string;
   /**
@@ -63,10 +86,15 @@ export interface WebpackPreloadEntryPoint {
    */
   prefixedEntries?: string[];
   /**
-   * The optional webpack config for your preload process, defaults to the
-   * renderer webpack config if blank
+   * The optional webpack config for your preload process.
+   * Defaults to the renderer webpack config if blank.
    */
   config?: WebpackConfiguration | string;
+}
+
+export interface StandaloneWebpackPreloadEntryPoint
+  extends WebpackPreloadEntryPoint {
+  name: string;
 }
 
 export interface WebpackPluginRendererConfig {
@@ -82,14 +110,14 @@ export interface WebpackPluginRendererConfig {
    */
   jsonStats?: boolean;
   /**
-   * Adjusts the Webpack config for all renderer entries based on whether `nodeIntegration`
-   * for the `BrowserWindow` is enabled. Namely, for Webpack's `target` option:
+   * Override the webpack config for this renderer based on whether `nodeIntegration` for
+   * the `BrowserWindow` is enabled. For webpack's `target` option:
    *
    * * When `nodeIntegration` is true, the `target` is `electron-renderer`.
    * * When `nodeIntegration` is false, the `target` is `web`.
    *
-   * Unfortunately, we cannot derive the value from the main process code as it can be a
-   * dynamically generated value at runtime, and Webpack processes at build-time.
+   * Unfortunately, we cannot derive the value from the main process code as it can be
+   * dynamically generated at run-time, and webpack processes at build-time.
    *
    * Defaults to `false` (as it is disabled by default in Electron \>= 5).
    */
@@ -102,11 +130,6 @@ export interface WebpackPluginRendererConfig {
 }
 
 export interface WebpackPluginConfig {
-  /**
-   * Default .webpack
-   */
-  output?: string;
-
   /**
    * The webpack config for your main process
    */
@@ -158,8 +181,10 @@ export interface WebpackPluginConfig {
    * * `setupExitSignals`
    * * `headers.Content-Security-Policy` (use the `devContentSecurityPolicy` config option)
    */
-  devServer?: Record<string, unknown>;
-  // TODO: use webpack-dev-server.Configuration when @types/webpack-dev-server upgrades to v4
+  devServer?: Omit<
+    WebpackDevServer.Configuration,
+    'port' | 'static' | 'setupExitSignals' | 'Content-Security-Policy'
+  >;
 }
 
 export type WebpackConfiguration =
