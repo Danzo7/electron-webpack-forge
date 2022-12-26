@@ -1,10 +1,11 @@
-import PluginBase from '@electron-forge/plugin-base';
-import { ForgeConfig, ForgeHookFn } from '@electron-forge/shared-types';
+import { PluginBase } from '@electron-forge/plugin-base';
+import { ForgeMultiHookMap, ResolvedForgeConfig, StartResult } from '@electron-forge/shared-types';
 import Logger from '@electron-forge/web-multi-logger';
 import webpack from 'webpack';
+import WebpackDevServer from 'webpack-dev-server';
 import { WebpackPluginConfig } from './Config';
 import WebpackConfigGenerator from './WebpackConfig';
-declare type WebpackToJsonOptions = Parameters<webpack.Stats['toJson']>[0];
+type WebpackToJsonOptions = Parameters<webpack.Stats['toJson']>[0];
 export default class WebpackPlugin extends PluginBase<WebpackPluginConfig> {
     name: string;
     private isProd;
@@ -28,16 +29,15 @@ export default class WebpackPlugin extends PluginBase<WebpackPluginConfig> {
     init: (dir: string) => void;
     setDirectories: (dir: string) => void;
     get configGenerator(): WebpackConfigGenerator;
-    private loggedOutputUrl;
-    getHook(name: string): ForgeHookFn | null;
-    resolveForgeConfig: (forgeConfig: ForgeConfig) => Promise<ForgeConfig>;
-    packageAfterCopy: (_forgeConfig: ForgeConfig, buildPath: string) => Promise<void>;
+    getHooks(): ForgeMultiHookMap;
+    resolveForgeConfig: (forgeConfig: ResolvedForgeConfig) => Promise<ResolvedForgeConfig>;
+    packageAfterCopy: (_forgeConfig: ResolvedForgeConfig, buildPath: string) => Promise<void>;
     compileMain: (watch?: boolean, logger?: Logger) => Promise<void>;
     compileRenderers: (watch?: boolean) => Promise<void>;
-    launchDevServers: (logger: Logger) => Promise<void>;
-    devServerOptions(): Record<string, unknown>;
+    launchRendererDevServers: (logger: Logger) => Promise<void>;
+    devServerOptions(): WebpackDevServer.Configuration;
     private alreadyStarted;
-    startLogic(): Promise<false>;
+    startLogic(): Promise<StartResult>;
 }
-export { WebpackPluginConfig };
+export { WebpackPlugin, WebpackPluginConfig };
 //# sourceMappingURL=WebpackPlugin.d.ts.map
